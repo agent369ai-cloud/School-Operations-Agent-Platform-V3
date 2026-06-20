@@ -1,0 +1,46 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html, body {
+  background: #F7F4EC;
+  color: #1B2A2F;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The "ledger" treatment: machine-generated values always render in mono. */
+.machine {
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.8125rem;
+  letter-spacing: -0.01em;
+}
+
+/* State badges share a shape; color carries meaning. */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+}
+
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid #2F6F6A;
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

@@ -1,0 +1,55 @@
+# Docker Compose for the School Operations Agent Platform.
+#
+# Two ways to run:
+#
+#   1. Default (SQLite, zero external services) — you usually do NOT need
+#      compose for this; just run the backend directly (see README). Compose is
+#      provided mainly for the production-shaped Postgres path.
+#
+#   2. Postgres profile — runs Postgres + the backend wired to it:
+#        docker compose --profile postgres up --build
+#
+# The frontend is run separately with `npm run dev` (see README) so you can
+# iterate on it quickly; it talks to the backend via NEXT_PUBLIC_API_BASE.
+
+services:
+  db:
+    image: postgres:16-alpine
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_USER: schoolops
+      POSTGRES_PASSWORD: schoolops
+      POSTGRES_DB: schoolops
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U schoolops"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: ./backend
+    profiles: ["postgres"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://schoolops:schoolops@db:5432/schoolops
+      SECRET_KEY: change-me-in-prod
+      LLM_MODE: ${LLM_MODE:-auto}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      CHANNEL_MODE: ${CHANNEL_MODE:-mock}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "python -m scripts.seed &&
+             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+volumes:
+  pgdata:

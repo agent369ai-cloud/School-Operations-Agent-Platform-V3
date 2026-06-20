@@ -1,0 +1,7 @@
+School Communication Policy
+
+Quiet hours: no automated messages between 21:00 and 07:00 local time.
+Reminders: a maximum of 3 reminders per assignment per student.
+Escalation: after 2 unanswered reminders, notify the linked guardian.
+Allowed channels: Telegram.
+Teacher approval: required before any assignment is created from a parsed brief.
