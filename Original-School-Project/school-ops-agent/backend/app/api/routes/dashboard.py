@@ -13,6 +13,7 @@ from app.models.operations import (
     Assignment,
     AssignmentTarget,
     Document,
+    Feedback,
     Submission,
 )
 
@@ -61,14 +62,43 @@ def teacher_dashboard(
             for a in assignments
         ],
         "blocked_students": [
-            {"assignment_id": str(t.assignment_id),
-             "student_id": str(t.student_id), "note": t.progress_note}
+            {
+                "assignment_id": str(t.assignment_id),
+                "assignment_title": (db.get(Assignment, t.assignment_id).title
+                                     if db.get(Assignment, t.assignment_id) else None),
+                "student_id": str(t.student_id),
+                "student_name": (db.get(User, t.student_id).full_name
+                                 if db.get(User, t.student_id) else str(t.student_id)[:8]),
+                "note": t.progress_note,
+                "teacher_note": t.teacher_note,
+            }
             for t in blocked
         ],
         "submissions_to_review": [
-            {"id": str(s.id), "assignment_id": str(s.assignment_id),
-             "student_id": str(s.student_id), "attempt": s.attempt,
-             "state": getattr(s.state, "value", s.state)}
+            {
+                "id": str(s.id),
+                "assignment_id": str(s.assignment_id),
+                "assignment_title": (db.get(Assignment, s.assignment_id).title
+                                     if db.get(Assignment, s.assignment_id) else None),
+                "student_id": str(s.student_id),
+                "student_name": (db.get(User, s.student_id).full_name
+                                 if db.get(User, s.student_id) else str(s.student_id)[:8]),
+                "attempt": s.attempt,
+                "state": getattr(s.state, "value", s.state),
+                "submitted_at": s.submitted_at.isoformat() if s.submitted_at else None,
+                "body_text": s.body_text,
+                "document_id": str(s.document_id) if s.document_id else None,
+                "document_filename": (db.get(Document, s.document_id).filename
+                                      if s.document_id and db.get(Document, s.document_id) else None),
+                "ai_review": s.ai_review,
+                "prior_feedback": [
+                    {"body": f.body, "decision": f.decision,
+                     "created_at": f.created_at.isoformat() if f.created_at else None}
+                    for f in db.query(Feedback)
+                        .filter(Feedback.submission_id == s.id)
+                        .order_by(Feedback.created_at.asc()).all()
+                ],
+            }
             for s in to_review
         ],
         "documents_awaiting_review": [
@@ -105,6 +135,8 @@ def student_dashboard(
         )
         out.append({
             "assignment_id": str(a.id), "title": a.title,
+            "subject": a.subject,
+            "instructions": a.instructions,
             "due_at": a.due_at.isoformat() if a.due_at else None,
             "progress_state": getattr(t.progress_state, "value", t.progress_state),
             "submission_state": getattr(latest_sub.state, "value", latest_sub.state) if latest_sub else None,

@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_auth_context
@@ -115,6 +116,58 @@ async def upload_document(
     return _to_response(doc)
 
 
+@router.post("/student-upload", status_code=201)
+async def student_upload(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Students upload their submission files (PDF / image). Returns a document_id
+    to attach to the subsequent POST /submissions call."""
+    if ctx.role != Role.STUDENT:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "students only")
+    data = await file.read()
+    if len(data) > settings.max_upload_bytes:
+        raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "file too large")
+    import os
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    allowed = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp"}
+    if ext not in allowed:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"only PDF or images allowed, got {ext}")
+
+    content_hash = sha256_bytes(data)
+    existing = db.query(Document).filter(
+        Document.school_id == ctx.school_id,
+        Document.content_hash == content_hash,
+        Document.doc_type == DocumentType.STUDENT_SUBMISSION,
+    ).one_or_none()
+    if existing:
+        return {"document_id": str(existing.id), "filename": existing.filename}
+
+    os.makedirs(settings.upload_dir, exist_ok=True)
+    doc = Document(
+        school_id=ctx.school_id, uploaded_by=ctx.user_id,
+        doc_type=DocumentType.STUDENT_SUBMISSION,
+        filename=file.filename or "submission",
+        content_type=file.content_type,
+        content_hash=content_hash,
+        review_state=ReviewState.APPROVED,  # student submissions don't need staff review
+    )
+    db.add(doc)
+    db.flush()
+    storage_path = os.path.join(settings.upload_dir, f"{doc.id}{ext}")
+    with open(storage_path, "wb") as fh:
+        fh.write(data)
+    doc.storage_path = storage_path
+    record_event(
+        db, event_type=AuditEventType.DOCUMENT_UPLOADED,
+        summary=f"Student uploaded submission file: {doc.filename}",
+        school_id=ctx.school_id, actor_user_id=ctx.user_id,
+        resource_type="document", resource_id=doc.id,
+    )
+    return {"document_id": str(doc.id), "filename": doc.filename}
+
+
 @router.get("", response_model=list[DocumentResponse])
 def list_documents(
     db: Session = Depends(get_db),
@@ -162,6 +215,51 @@ def approve_parse(
     elif doc.doc_type == DocumentType.SCHOOL_POLICY and doc.parsed:
         pass  # policy docs are reviewed; admin applies via /admin/policy
     return _to_response(doc)
+
+
+@router.get("/{document_id}/file")
+def download_document(
+    document_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    token: str | None = None,          # ?token= for browser tab opens
+    authorization: str | None = None,  # Header("Authorization") via Header()
+    ctx: AuthContext | None = None,
+):
+    """Serve the raw uploaded file. Accepts bearer token via header OR ?token= query param
+    so the browser can open the file in a new tab without JS fetch."""
+    import os
+    from fastapi import Header as _Header
+    from app.core.security import decode_access_token
+    from app.models.core import User as _User
+
+    # Resolve token from either source
+    raw_token = token
+    if not raw_token and authorization and authorization.lower().startswith("bearer "):
+        raw_token = authorization.split(" ", 1)[1]
+    if not raw_token:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing bearer token")
+
+    payload = decode_access_token(raw_token)
+    if not payload:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "invalid or expired token")
+
+    user = db.get(_User, payload["sub"])
+    if not user or not user.is_active:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "user not found")
+
+    doc = db.get(Document, document_id)
+    if not doc or str(doc.school_id) != str(user.school_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "document not found")
+    if user.role == Role.STUDENT and str(doc.uploaded_by) != str(user.id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "not your document")
+    if not doc.storage_path or not os.path.exists(doc.storage_path):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "file not found on disk")
+
+    return FileResponse(
+        doc.storage_path,
+        media_type=doc.content_type or "application/octet-stream",
+        filename=doc.filename,
+    )
 
 
 @router.post("/{document_id}/reject", response_model=DocumentResponse)

@@ -129,3 +129,24 @@ def init_db() -> None:
     from app import models  # noqa: F401  (ensures models are registered)
 
     Base.metadata.create_all(bind=engine)
+
+    # Additive column migrations for SQLite (create_all won't ALTER existing tables).
+    if settings.is_sqlite:
+        _sqlite_add_columns_if_missing()
+
+
+def _sqlite_add_columns_if_missing() -> None:
+    """Apply any missing columns to existing SQLite tables."""
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(engine)
+    migrations = [
+        ("assignment_targets", "teacher_note", "TEXT"),
+        ("submissions", "ai_review", "JSON"),
+    ]
+    with engine.connect() as conn:
+        for table, column, col_type in migrations:
+            existing = [c["name"] for c in inspector.get_columns(table)]
+            if column not in existing:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+        conn.commit()

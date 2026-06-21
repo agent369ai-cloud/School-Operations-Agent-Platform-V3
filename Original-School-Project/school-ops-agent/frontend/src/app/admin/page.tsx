@@ -8,21 +8,26 @@ import { DocumentDTO, api, subscribeEvents } from "@/lib/api";
 export default function AdminPage() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [classes, setClasses] = useState<{ id: string; name: string }[]>([]);
+  const [students, setStudents] = useState<{ id: string; full_name: string }[]>([]);
   const [docs, setDocs] = useState<DocumentDTO[]>([]);
   const [newClass, setNewClass] = useState("");
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   const [inviteRole, setInviteRole] = useState<"teacher" | "student" | "guardian">("teacher");
   const [inviteClass, setInviteClass] = useState("");
+  const [inviteStudent, setInviteStudent] = useState("");
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [classError, setClassError] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
 
   async function refresh() {
-    const [d, cls, dl] = await Promise.all([
-      api.adminDashboard(), api.listClasses(), api.listDocuments(),
+    const [d, cls, dl, users] = await Promise.all([
+      api.adminDashboard(), api.listClasses(), api.listDocuments(), api.listUsers(),
     ]);
     setCounts(d.counts); setClasses(cls); setDocs(dl);
+    const studs = users.filter((u) => u.role === "student");
+    setStudents(studs.map((u) => ({ id: u.id, full_name: u.full_name })));
     if (cls[0] && !inviteClass) setInviteClass(cls[0].id);
+    if (studs[0] && !inviteStudent) setInviteStudent(studs[0].id);
   }
   useEffect(() => {
     refresh().catch(() => {});
@@ -61,6 +66,7 @@ export default function AdminPage() {
       const r = await api.createInvite({
         role: inviteRole,
         class_id: inviteRole !== "guardian" ? inviteClass : undefined,
+        target_student_id: inviteRole === "guardian" ? inviteStudent : undefined,
       });
       setInviteToken(r.token);
     } catch (e) {
@@ -136,7 +142,15 @@ export default function AdminPage() {
               <option value="student">Student</option>
               <option value="guardian">Guardian</option>
             </select>
-            {inviteRole !== "guardian" && (
+            {inviteRole === "guardian" ? (
+              <select value={inviteStudent} onChange={(e) => setInviteStudent(e.target.value)}
+                disabled={students.length === 0}
+                className="flex-1 px-3 py-1.5 rounded-md border border-line bg-surface text-sm disabled:opacity-50">
+                {students.length === 0
+                  ? <option value="">— no students yet —</option>
+                  : students.map((s) => <option key={s.id} value={s.id}>{s.full_name}</option>)}
+              </select>
+            ) : (
               <select value={inviteClass} onChange={(e) => setInviteClass(e.target.value)}
                 disabled={classes.length === 0}
                 className="flex-1 px-3 py-1.5 rounded-md border border-line bg-surface text-sm disabled:opacity-50">
@@ -145,7 +159,10 @@ export default function AdminPage() {
                   : classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             )}
-            <Button onClick={makeInvite} disabled={inviteRole !== "guardian" && !inviteClass}>Create</Button>
+            <Button onClick={makeInvite}
+              disabled={inviteRole === "guardian" ? !inviteStudent : !inviteClass}>
+              Create
+            </Button>
           </div>
           {inviteError && <p className="text-blocked text-sm mb-2">{inviteError}</p>}
           {inviteToken && (

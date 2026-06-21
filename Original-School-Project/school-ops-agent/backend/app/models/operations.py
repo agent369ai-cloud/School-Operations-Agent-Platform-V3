@@ -168,6 +168,8 @@ class AssignmentTarget(Base):
     )
     # Free-text note from the student when blocked / reporting progress.
     progress_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Teacher's follow-up note sent back to the student.
+    teacher_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_reminded_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -204,6 +206,7 @@ class Submission(TimestampMixin, Base):
     document_id: Mapped[uuid.UUID | None] = mapped_column(
         GUID, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True
     )
+    ai_review: Mapped[dict | None] = mapped_column(nullable=True)
     submitted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, nullable=False
     )

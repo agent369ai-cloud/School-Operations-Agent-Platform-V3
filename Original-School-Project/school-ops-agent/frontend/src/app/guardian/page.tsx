@@ -1,23 +1,42 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Shield } from "lucide-react";
-import { Badge, Card, Shell } from "@/components/ui";
+import { Bell, BellOff, Shield } from "lucide-react";
+import { Badge, Button, Card, Shell } from "@/components/ui";
 import { AssignmentDTO, api, subscribeEvents } from "@/lib/api";
+
+type LinkedStudent = { student_id: string; student_name: string; opted_in: boolean };
 
 export default function GuardianPage() {
   const [assignments, setAssignments] = useState<AssignmentDTO[]>([]);
+  const [linkedStudents, setLinkedStudents] = useState<LinkedStudent[]>([]);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   async function refresh() {
-    const list = await api.listAssignments();
+    const [list, studs] = await Promise.all([
+      api.listAssignments(),
+      api.listMyStudents(),
+    ]);
     setAssignments(list);
+    setLinkedStudents(studs);
     setLoading(false);
+  }
+
+  async function toggleOptIn(studentId: string) {
+    setTogglingId(studentId);
+    try {
+      const updated = await api.toggleOptIn(studentId);
+      setLinkedStudents((prev) =>
+        prev.map((s) => s.student_id === studentId ? { ...s, opted_in: updated.opted_in } : s)
+      );
+    } finally {
+      setTogglingId(null);
+    }
   }
 
   useEffect(() => {
     refresh().catch(() => setLoading(false));
-    // Refresh when school activity happens (e.g. teacher activates an assignment).
     const unsub = subscribeEvents(() => { refresh().catch(() => {}); });
     return unsub;
   }, []);
@@ -34,9 +53,34 @@ export default function GuardianPage() {
         Assignments your children are enrolled in, updated live.
       </p>
 
+      {/* Linked students + opt-in */}
+      {linkedStudents.length > 0 && (
+        <Card title="My children">
+          <ul className="space-y-2 mb-1">
+            {linkedStudents.map((s) => (
+              <li key={s.student_id}
+                className="flex items-center justify-between">
+                <span className="text-sm text-ink font-medium">{s.student_name}</span>
+                <Button
+                  variant={s.opted_in ? "ghost" : "primary"}
+                  onClick={() => toggleOptIn(s.student_id)}
+                  disabled={togglingId === s.student_id}>
+                  {s.opted_in
+                    ? <><BellOff size={13} /> Notifications on</>
+                    : <><Bell size={13} /> Enable notifications</>}
+                </Button>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs text-muted mt-2">
+            Enable notifications to receive updates about your child&apos;s progress.
+          </p>
+        </Card>
+      )}
+
       {/* Privacy notice */}
       <div className="flex items-start gap-2 bg-surface border border-line rounded-lg
-                      px-4 py-3 mb-6 text-sm text-muted">
+                      px-4 py-3 my-4 text-sm text-muted">
         <Shield size={15} className="mt-0.5 shrink-0" />
         <span>
           You can see assignment titles, subjects, and due dates.

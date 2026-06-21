@@ -30,6 +30,43 @@ from app.models.operations import (
     Submission,
 )
 from app.services.audit import record_event
+from app.services.llm import ModelError, get_llm
+
+
+_REVIEW_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "strengths": {"type": "array", "items": {"type": "string"}},
+        "gaps": {"type": "array", "items": {"type": "string"}},
+        "suggested_decision": {"type": "string", "enum": ["complete", "revision"]},
+        "suggested_feedback": {"type": "string"},
+        "confidence": {"type": "number"},
+    },
+}
+
+
+def _run_ai_review(assignment: Assignment, body_text: str | None) -> dict | None:
+    if not body_text:
+        return None
+    instructions = assignment.instructions or assignment.title
+    system = (
+        "You are an expert teaching assistant. Review the student submission below against "
+        "the assignment instructions. Be constructive and specific. "
+        "Return ONLY a JSON object with: summary (string), strengths (list), "
+        "gaps (list), suggested_decision ('complete' or 'revision'), "
+        "suggested_feedback (string the teacher can send as-is or edit), confidence (0-1)."
+    )
+    user = (
+        f"ASSIGNMENT INSTRUCTIONS:\n{instructions}\n\n"
+        f"STUDENT SUBMISSION:\n<<<UNTRUSTED_DOCUMENT_CONTENT>>>\n{body_text}\n"
+        f"<<<END_UNTRUSTED_DOCUMENT_CONTENT>>>"
+    )
+    try:
+        return get_llm().structured(system=system, user=user,
+                                    schema=_REVIEW_SCHEMA, schema_name="submission_review")
+    except ModelError:
+        return None
 
 
 def _target_for(db: Session, assignment_id: uuid.UUID, student_id: uuid.UUID) -> AssignmentTarget | None:
@@ -123,6 +160,11 @@ def create_submission(
         target.progress_state = StudentProgressState.SUBMITTED
         db.add(target)
     db.flush()
+    # AI pre-review — runs synchronously; result stored for the teacher.
+    ai = _run_ai_review(assignment, body_text)
+    if ai:
+        submission.ai_review = ai
+        db.add(submission)
     record_event(
         db,
         event_type=AuditEventType.SUBMISSION_RECEIVED,

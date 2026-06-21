@@ -22,6 +22,7 @@ from app.api.routes import (
     channels,
     dashboard,
     documents,
+    guardian,
     operations,
 )
 from app.core.authz import AccessDenied
@@ -136,5 +137,5 @@ def health():
 
 
 for r in (auth.router, admin.router, documents.router, assignments.router,
-          operations.router, channels.router, dashboard.router):
+          operations.router, channels.router, dashboard.router, guardian.router):
     app.include_router(r, prefix="/api")

@@ -12,8 +12,8 @@ from app.api.deps import get_auth_context, get_current_user
 from app.core.authz import AccessDenied, AuthContext, require_admin
 from app.db.base import SessionLocal, get_db
 from app.models.core import User
-from app.models.enums import Role, StateTransitionError, SubmissionState
-from app.models.operations import Assignment, AuditEvent, Submission
+from app.models.enums import Role, StateTransitionError, StudentProgressState, SubmissionState
+from app.models.operations import Assignment, AssignmentTarget, AuditEvent, Submission
 from app.schemas.api import (
     AuditEventResponse,
     CreateSubmissionRequest,
@@ -74,6 +74,67 @@ async def progress(
                  "state": getattr(target.progress_state, "value", target.progress_state)},
     ))
     return {"progress_state": getattr(target.progress_state, "value", target.progress_state)}
+
+
+@router.post("/teacher/unblock", status_code=200)
+async def teacher_unblock(
+    body: dict,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Teacher follows up on a blocked student: adds a note and clears the block."""
+    if ctx.role not in (Role.TEACHER, Role.ADMIN):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "teacher or admin only")
+    assignment_id = body.get("assignment_id")
+    student_id = body.get("student_id")
+    note = body.get("note", "")
+    if not assignment_id or not student_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "assignment_id and student_id required")
+    target = (
+        db.query(AssignmentTarget)
+        .filter(
+            AssignmentTarget.assignment_id == uuid.UUID(assignment_id),
+            AssignmentTarget.student_id == uuid.UUID(student_id),
+        )
+        .one_or_none()
+    )
+    if not target:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "no progress record for that student/assignment")
+    target.teacher_note = note
+    target.progress_state = StudentProgressState.IN_PROGRESS
+    db.add(target)
+    db.commit()
+    await bus.publish(Event(
+        type="progress.reported", school_id=str(ctx.school_id),
+        payload={"assignment_id": assignment_id, "blocked": False,
+                 "state": StudentProgressState.IN_PROGRESS.value},
+    ))
+    return {"status": "unblocked", "teacher_note": note}
+
+
+@router.post("/submissions/{submission_id}/ai-review", status_code=200)
+def generate_ai_review(
+    submission_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Run (or re-run) AI review on an existing submission. Teacher only."""
+    if ctx.role not in (Role.TEACHER, Role.ADMIN):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "teachers only")
+    sub = db.get(Submission, submission_id)
+    if not sub or sub.school_id != ctx.school_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "submission not found")
+    assignment = db.get(Assignment, sub.assignment_id)
+    if not assignment:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "assignment not found")
+    result = svc._run_ai_review(assignment, sub.body_text)
+    if result is None:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY,
+                            "no submission text to review")
+    sub.ai_review = result
+    db.add(sub)
+    db.commit()
+    return result
 
 
 @router.post("/feedback", status_code=201)

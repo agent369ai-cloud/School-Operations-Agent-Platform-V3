@@ -37,3 +37,7 @@ Thumbs.db
 *.pyo
 *.pyc
 .Python
+
+# Uploaded files (user data)
+backend/uploads/
+frontend/tsconfig.tsbuildinfo

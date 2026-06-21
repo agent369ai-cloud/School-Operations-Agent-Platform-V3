@@ -197,6 +197,53 @@ def _strip_delimiters(text: str) -> str:
     return text
 
 
+def _review_submission(text: str) -> dict:
+    low = text.lower()
+    word_count = len(text.split())
+    has_structure = any(w in low for w in ["introduction", "method", "result", "conclusion", "hypothesis"])
+    has_citations = any(w in low for w in ["source", "reference", "according to", "cited", "doi", "http"])
+    has_diagram = any(w in low for w in ["diagram", "figure", "fig.", "illustration", "labelled"])
+
+    strengths, gaps = [], []
+    if word_count >= 200:
+        strengths.append("Submission has sufficient length and detail.")
+    else:
+        gaps.append(f"Response is brief ({word_count} words). Expand with more detail.")
+    if has_structure:
+        strengths.append("Clear structure with recognisable sections.")
+    else:
+        gaps.append("Missing clear sections (e.g. introduction, method, results, conclusion).")
+    if has_citations:
+        strengths.append("Includes references or citations.")
+    else:
+        gaps.append("No sources cited — add at least two references.")
+    if has_diagram:
+        strengths.append("Mentions a diagram or figure.")
+    else:
+        gaps.append("No diagram mentioned — include a labelled diagram as required.")
+
+    decision = "complete" if len(gaps) == 0 else ("revision" if len(gaps) >= 2 else "complete")
+    confidence = round(0.5 + 0.1 * len(strengths) - 0.05 * len(gaps), 2)
+    summary = (
+        "The submission covers the key areas adequately."
+        if decision == "complete"
+        else "The submission needs improvement before it can be marked complete."
+    )
+    suggested_feedback = ""
+    if gaps:
+        suggested_feedback = "Please address the following:\n" + "\n".join(f"• {g}" for g in gaps)
+    else:
+        suggested_feedback = "Well done! Your submission meets the requirements."
+    return {
+        "summary": summary,
+        "strengths": strengths,
+        "gaps": gaps,
+        "suggested_decision": decision,
+        "suggested_feedback": suggested_feedback,
+        "confidence": min(max(confidence, 0.3), 0.95),
+    }
+
+
 def generate_mock(*, schema_name: str, user_text: str) -> str:
     doc_text = _strip_delimiters(user_text)
     if schema_name == "intent":
@@ -206,5 +253,7 @@ def generate_mock(*, schema_name: str, user_text: str) -> str:
         return json.dumps(_extract_assignment(doc_text))
     if schema_name == "class_roster":
         return json.dumps(_extract_roster(doc_text))
+    if schema_name == "submission_review":
+        return json.dumps(_review_submission(doc_text))
     # Fallback: echo an empty object so callers' validation drives behavior.
     return json.dumps({})

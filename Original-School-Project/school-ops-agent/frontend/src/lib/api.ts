@@ -56,13 +56,15 @@ async function request<T>(
     let detail = res.statusText;
     try {
       const j = await res.json();
-
-
       if (typeof j.detail === "string") detail = j.detail;
       else if (Array.isArray(j.detail)) detail = j.detail.map((d: {msg?: string}) => d.msg ?? JSON.stringify(d)).join(", ");
       else if (j.detail) detail = JSON.stringify(j.detail);
     } catch {
       /* ignore */
+    }
+    if (res.status === 401 && opts.auth !== false) {
+      clearSession();
+      if (typeof window !== "undefined") window.location.href = "/login";
     }
     throw new ApiError(res.status, detail);
   }
@@ -122,7 +124,14 @@ export const api = {
   transitionAssignment: (id: string, to: string) =>
     request<AssignmentDTO>(`/assignments/${id}/transition`, { method: "POST", body: { to } }),
 
-  submit: (b: { assignment_id: string; body_text?: string }) =>
+  uploadSubmissionFile: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<{ document_id: string; filename: string }>(
+      "/documents/student-upload", { method: "POST", form });
+  },
+
+  submit: (b: { assignment_id: string; body_text?: string; document_id?: string }) =>
     request<{ id: string; attempt: number; state: string }>(
       "/submissions", { method: "POST", body: b }),
   reportProgress: (b: { assignment_id: string; blocked: boolean; note?: string }) =>
@@ -138,6 +147,27 @@ export const api = {
 
   audit: (correlationId?: string) =>
     request<AuditEvent[]>(`/audit${correlationId ? `?correlation_id=${correlationId}` : ""}`),
+
+  teacherUnblock: (b: { assignment_id: string; student_id: string; note: string }) =>
+    request<{ status: string; teacher_note: string }>(
+      "/teacher/unblock", { method: "POST", body: b }),
+
+  generateAiReview: (submissionId: string) =>
+    request<TeacherDashboard["submissions_to_review"][0]["ai_review"]>(
+      `/submissions/${submissionId}/ai-review`, { method: "POST" }),
+
+  documentFileUrl: (documentId: string): string => {
+    const s = loadSession();
+    const token = s?.access_token ?? "";
+    return `/api/documents/${documentId}/file?token=${encodeURIComponent(token)}`;
+  },
+
+  listMyStudents: () =>
+    request<{ student_id: string; student_name: string; opted_in: boolean }[]>(
+      "/guardian/students"),
+  toggleOptIn: (studentId: string) =>
+    request<{ student_id: string; opted_in: boolean }>(
+      `/guardian/students/${studentId}/opt-in`, { method: "POST" }),
 };
 
 // --- DTO types ---------------------------------------------------------------
@@ -157,9 +187,22 @@ export interface AssignmentDTO {
 }
 export interface TeacherDashboard {
   assignments: { id: string; title: string; state: string; due_at: string | null }[];
-  blocked_students: { assignment_id: string; student_id: string; note: string | null }[];
+  blocked_students: {
+    assignment_id: string; assignment_title: string | null;
+    student_id: string; student_name: string;
+    note: string | null; teacher_note: string | null;
+  }[];
   submissions_to_review: {
-    id: string; assignment_id: string; student_id: string; attempt: number; state: string;
+    id: string; assignment_id: string; assignment_title: string | null;
+    student_id: string; student_name: string; attempt: number; state: string;
+    submitted_at: string | null; body_text: string | null;
+    document_id: string | null; document_filename: string | null;
+    ai_review: {
+      summary: string; strengths: string[]; gaps: string[];
+      suggested_decision: "complete" | "revision";
+      suggested_feedback: string; confidence: number;
+    } | null;
+    prior_feedback: { body: string; decision: string | null; created_at: string | null }[];
   }[];
   documents_awaiting_review: {
     id: string; filename: string; doc_type: string; review_state: string;
@@ -168,7 +211,8 @@ export interface TeacherDashboard {
 }
 export interface StudentDashboard {
   assignments: {
-    assignment_id: string; title: string; due_at: string | null;
+    assignment_id: string; title: string; subject: string | null;
+    instructions: string | null; due_at: string | null;
     progress_state: string; submission_state: string | null; attempts: number;
   }[];
 }
